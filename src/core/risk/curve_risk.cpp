@@ -133,9 +133,6 @@ fir_status_t key_rate_durations(Context              &ctx,
     if (!curve.supports_bump())
         return FIR_E_NO_BUMP_SUPPORT;
 
-    if (n == 0)
-        return FIR_OK;
-
     PriceComponents base{};
     const fir_status_t rv = price_from_curve(bond, curve, &base);
     if (rv != FIR_OK)
