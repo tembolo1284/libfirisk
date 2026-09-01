@@ -46,6 +46,18 @@ DfDerivs df_derivs(double yield, double t, fir_compounding_t comp, int k) noexce
     return r;
 }
 
+/* Longest cashflow time, used to locate the simple-compounding
+   singularity at y = -1/t. */
+double max_cashflow_time(const Bond &bond) noexcept
+{
+    double longest = 0.0;
+    for (const Cashflow &cf : bond.cashflows()) {
+        if (cf.time > longest)
+            longest = cf.time;
+    }
+    return longest;
+}
+
 struct YieldSolveCtx {
     const Bond       *bond;
     fir_compounding_t comp;
@@ -101,6 +113,17 @@ fir_status_t pv_derivatives(const Bond       &bond,
     if (comp == FIR_COMP_PERIODIC &&
         !(1.0 + yield / static_cast<double>(k) > 0.0))
         return FIR_E_BAD_ARG;
+
+    /* Simple discounting goes singular, then negative, at y = -1/t, and
+       t differs per cashflow. Without this the PV silently stops being
+       monotone in yield and any bracket built over it is meaningless.
+       Only the longest flow needs checking: it reaches the singularity
+       first as the yield falls. */
+    if (comp == FIR_COMP_SIMPLE) {
+        const double longest = max_cashflow_time(bond);
+        if (!(1.0 + yield * longest > 0.0))
+            return FIR_E_BAD_ARG;
+    }
 
     double pv = 0.0, dpv = 0.0, d2pv = 0.0, twpv = 0.0;
 
@@ -217,14 +240,34 @@ fir_status_t yield_from_price(const Bond         &bond,
     fn.eval      = yield_objective;
     fn.user_data = &c;
 
-    /* Lower bound sits just above the periodic singularity; upper is
-       far past any tradeable yield. Price is monotone decreasing in
-       yield, so a bracket over this range always exists for a
-       positive target price. */
-    const int    k  = bond.yield_frequency();
-    const double lo = comp == FIR_COMP_PERIODIC
-                          ? -static_cast<double>(k) * 0.999
-                          : -0.99;
+    /* The lower bound has to stay clear of each convention's
+       singularity, and they sit in very different places. Periodic
+       blows up at y = -k. Simple blows up at y = -1/t for the longest
+       cashflow, which on a ten year bond is around -0.13 — far closer
+       to zero than the -0.99 that suits continuous compounding. Using
+       one bound for all three leaves the objective non-monotone over
+       part of the range and the bracket test then means nothing. */
+    const int k = bond.yield_frequency();
+    double lo;
+
+    switch (comp) {
+    case FIR_COMP_SIMPLE: {
+        const double longest = max_cashflow_time(bond);
+        lo = longest > 0.0 ? -0.999 / longest : -0.99;
+        break;
+    }
+    case FIR_COMP_PERIODIC:
+        lo = -static_cast<double>(k) * 0.999;
+        break;
+    case FIR_COMP_CONTINUOUS:
+    default:
+        lo = -0.99;
+        break;
+    }
+
+    /* Price is monotone decreasing in yield across the whole of
+       [lo, hi] once the singularity is excluded, so a bracket exists
+       for any target the instrument can actually reach. */
     const double hi = 10.0;
 
     return solve_newton(fn, 0.05, lo, hi, cfg, out_yield);

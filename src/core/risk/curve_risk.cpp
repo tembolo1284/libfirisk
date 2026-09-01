@@ -127,36 +127,32 @@ fir_status_t key_rate_durations(Context              &ctx,
                                 size_t                n,
                                 double                bump_bp) noexcept
 {
-    if (!tenors || !out_krd)
-        return FIR_E_NULL_ARG;
 
-    if (!curve.supports_bump())
-        return FIR_E_NO_BUMP_SUPPORT;
+    if (n == 0) { return FIR_OK; }
+
+    if (!tenors || !out_krd) { return FIR_E_NULL_ARG; }
+
+    if (!curve.supports_bump()) { return FIR_E_NO_BUMP_SUPPORT; }
 
     PriceComponents base{};
     const fir_status_t rv = price_from_curve(bond, curve, &base);
-    if (rv != FIR_OK)
-        return rv;
+    if (rv != FIR_OK) { return rv; }
 
-    if (!(base.dirty > 0.0))
-        return FIR_E_BAD_ARG;
+    if (!(base.dirty > 0.0)) { return FIR_E_BAD_ARG; }
 
     const double dy = bump_bp * 1e-4;
 
     for (size_t i = 0; i < n; ++i) {
-        if (!(tenors[i] > 0.0) || !std::isfinite(tenors[i]))
-            return FIR_E_BAD_ARG;
+        if (!(tenors[i] > 0.0) || !std::isfinite(tenors[i])) { return FIR_E_BAD_ARG; }
 
         double up = 0.0, down = 0.0;
 
         fir_status_t brv = priced_at_pillar_bump(bond, curve, tenors[i],
                                                  bump_bp, &up);
-        if (brv != FIR_OK)
-            return brv;
+        if (brv != FIR_OK) { return brv; }
 
         brv = priced_at_pillar_bump(bond, curve, tenors[i], -bump_bp, &down);
-        if (brv != FIR_OK)
-            return brv;
+        if (brv != FIR_OK) { return brv; }
 
         out_krd[i] = (down - up) / (2.0 * base.dirty * dy);
     }

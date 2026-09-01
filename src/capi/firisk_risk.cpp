@@ -218,8 +218,10 @@ fir_status_t fir_bond_key_rate_durations(fir_context_t     *ctx,
     FIR_ENTRY(ctx, c);
     FIR_RETURN_IF_NULL(c, FIR_E_NULL_ARG);
     FIR_REQUIRE_PTR(c, bond, "bond");
-    FIR_REQUIRE_PTR(c, tenors, "tenors");
-    FIR_REQUIRE_PTR(c, out_krd, "out_krd");
+    if (n > 0) {
+    	FIR_REQUIRE_PTR(c, tenors, "tenors");
+    	FIR_REQUIRE_PTR(c, out_krd, "out_krd");
+    }
 
     firisk::DiscountSource src;
     const fir_status_t vrv = make_source(curve, &src);

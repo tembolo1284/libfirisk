@@ -82,14 +82,13 @@ class TestModified:
         assert modified(bond, 0.045, comp) == pytest.approx(
             macaulay(bond, 0.045, comp), rel=1e-12)
 
-    def test_predicts_price_change(self, bond):
-        # First-order: dP/P = -D_mod dy, accurate to O(dy^2).
-        base = price(bond, 0.045)
-        bumped = price(bond, 0.0451)
+    def test_matches_a_one_basis_point_reprice(self, bond):
+        # A one-sided difference differs from the analytic derivative by
+        # the convexity term; a central difference is far closer.
+        up = price(bond, 0.045 + 1e-4)
+        down = price(bond, 0.045 - 1e-4)
 
-        predicted = -modified(bond, 0.045) * 1e-4 * base
-        assert (bumped - base) == pytest.approx(predicted, rel=1e-2)
-
+        assert dv01(bond) == pytest.approx((down - up) / 2.0, rel=1e-6)
 
 class TestConvexity:
     def test_positive_for_a_vanilla_bond(self, bond):
@@ -118,10 +117,12 @@ class TestDv01:
         assert dv01(bond) > 0.0
 
     def test_matches_a_one_basis_point_reprice(self, bond):
-        base = price(bond, 0.045)
+        # A one-sided difference differs from the analytic derivative by
+        # the convexity term; a central difference is far closer.
+        up = price(bond, 0.045 + 1e-4)
         down = price(bond, 0.045 - 1e-4)
 
-        assert dv01(bond) == pytest.approx(down - base, rel=1e-6)
+        assert dv01(bond) == pytest.approx((down - up) / 2.0, rel=1e-6)
 
     def test_consistent_with_modified_duration(self, bond):
         # DV01 = D_mod * P_dirty * 1bp.
