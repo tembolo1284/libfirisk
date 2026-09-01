@@ -25,6 +25,7 @@ minimum-version = "0.9"
 build-dir = "build/{wheel_tag}"
 wheel.py-api = "cp312"
 cmake.version = ">= 3.21"
+wheel.packages = ["firisk"]
 
 [tool.scikit-build.cmake.define]
 FIRISK_BUILD_SHARED = "OFF"
