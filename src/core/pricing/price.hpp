@@ -14,14 +14,15 @@ struct PriceComponents {
     double accrued;
 };
 
-/* PV and its first two derivatives with respect to yield, in one pass
-   over the cashflows. Every analytic risk measure is a ratio of these,
-   so duration, convexity and DV01 each cost one traversal rather than
-   three bumped revaluations. */
+/* PV and its first two derivatives with respect to yield, plus the
+   time-weighted PV, all in one pass over the cashflows. Every analytic
+   risk measure is a ratio of these, so duration, convexity and DV01
+   together cost one traversal rather than three. */
 struct PvDerivatives {
-    double pv;      /* dirty price               */
-    double dpv;     /* dP/dy                     */
-    double d2pv;    /* d2P/dy2                   */
+    double pv;      /* dirty price                */
+    double dpv;     /* dP/dy                      */
+    double d2pv;    /* d2P/dy2                    */
+    double twpv;    /* sum over t * cf * df       */
 };
 
 fir_status_t pv_derivatives(const Bond       &bond,

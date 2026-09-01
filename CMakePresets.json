@@ -1,0 +1,69 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "gcc-debug",
+      "displayName": "GCC Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/gcc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "FIRISK_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "gcc-release",
+      "displayName": "GCC RelWithDebInfo",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/gcc-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "gcc-static",
+      "displayName": "GCC static library",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/gcc-static",
+      "cacheVariables": {
+        "FIRISK_BUILD_SHARED": "OFF"
+      }
+    },
+    {
+      "name": "clang-asan",
+      "displayName": "Clang ASan + UBSan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/clang-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "FIRISK_SANITIZER": "address",
+        "FIRISK_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gcc-debug",   "configurePreset": "gcc-debug" },
+    { "name": "gcc-release", "configurePreset": "gcc-release" },
+    { "name": "gcc-static",  "configurePreset": "gcc-static" },
+    { "name": "clang-asan",  "configurePreset": "clang-asan" }
+  ],
+  "testPresets": [
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "clang-asan",
+      "configurePreset": "clang-asan",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

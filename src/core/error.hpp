@@ -5,12 +5,16 @@
 #include <cstddef>
 
 #include "firisk.h"
+#include "compat.hpp"
 
 namespace firisk {
 
 /* Long enough for a convention name plus two dates and a number.
    Truncation is fine; this is diagnostic, not a data channel. */
 inline constexpr std::size_t kErrorMessageSize = 256;
+
+/* Static default text for every fir_status_e value. Never null. */
+const char *status_message(fir_status_t status) noexcept;
 
 class ErrorState {
 public:
@@ -24,7 +28,7 @@ public:
 
     /* Always returns `status` so call sites can `return err.set(...)`. */
     fir_status_t set(fir_status_t status, const char *fmt, ...) noexcept
-        __attribute__((format(printf, 3, 4)));
+        FIR_PRINTF_FORMAT(3, 4);
 
     fir_status_t setv(fir_status_t status,
                       const char *fmt,
@@ -41,9 +45,6 @@ private:
     fir_status_t status_;
     char         message_[kErrorMessageSize];
 };
-
-/* Static default text for every fir_status_e value. Never null. */
-const char *status_message(fir_status_t status) noexcept;
 
 /* Validates the `struct_size` first member of a caller-allocated POD.
    Accepts anything from the smallest ABI-compatible size up to the

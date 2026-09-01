@@ -1,5 +1,6 @@
 #include "firisk.h"
 #include "shim.hpp"
+#include "../core/context.hpp"
 #include "../core/instrument/bond.hpp"
 #include "../core/pricing/discount.hpp"
 #include "../core/pricing/price.hpp"
@@ -8,7 +9,8 @@
 
 namespace {
 
-/* Default solver settings for the context-free entry points. */
+/* The pricing entry points take no context, so they use fixed solver
+   settings rather than the context's configured ones. */
 firisk::SolverConfig default_solver() noexcept
 {
     firisk::SolverConfig cfg;
@@ -17,7 +19,7 @@ firisk::SolverConfig default_solver() noexcept
     return cfg;
 }
 
-fir_status_t make_source(const fir_curve_t     *curve,
+fir_status_t make_source(const fir_curve_t      *curve,
                          firisk::DiscountSource *out) noexcept
 {
     const fir_status_t rv = firisk::DiscountSource::validate(curve);
@@ -135,74 +137,104 @@ FIR_ANALYTIC_ACCESSOR(fir_bond_dv01,              dv01)
 
 /* ---------------- curve risk ---------------- */
 
-static fir_status_t curve_risk_field(const fir_bond_t  *bond,
-                                     const fir_curve_t *curve,
-                                     double            *out,
-                                     int                which)
+namespace {
+
+enum CurveRiskField {
+    kEffectiveDuration = 0,
+    kEffectiveConvexity,
+    kCurveDv01
+};
+
+fir_status_t curve_risk_field(fir_context_t     *ctx,
+                              const fir_bond_t  *bond,
+                              const fir_curve_t *curve,
+                              double            *out,
+                              CurveRiskField     which)
 {
-    FIR_RETURN_IF_NULL(bond, FIR_E_NULL_ARG);
-    FIR_RETURN_IF_NULL(out, FIR_E_NULL_ARG);
+    FIR_ENTRY(ctx, c);
+    FIR_RETURN_IF_NULL(c, FIR_E_NULL_ARG);
+    FIR_REQUIRE_PTR(c, bond, "bond");
+    FIR_REQUIRE_PTR(c, out, "out");
 
     firisk::DiscountSource src;
     const fir_status_t vrv = make_source(curve, &src);
     if (vrv != FIR_OK)
-        return vrv;
+        return c->error().set(vrv, "curve: %s",
+                              firisk::status_message(vrv));
 
-    /* No context on these entry points, so the default 1bp bump is
-       used rather than the context's configured size. */
     firisk::CurveRisk r{};
     const fir_status_t rv = firisk::curve_risk(
-        *AS_CTYPE(firisk::Bond, bond), src, 1.0, &r);
+        *AS_CTYPE(firisk::Bond, bond), src, c->bump_size(), &r);
     if (rv != FIR_OK)
-        return rv;
+        return c->error().set(rv, "curve risk at a %g bp bump: %s",
+                              c->bump_size(),
+                              firisk::status_message(rv));
 
     switch (which) {
-    case 0: *out = r.effective_duration;  break;
-    case 1: *out = r.effective_convexity; break;
-    default: *out = r.dv01;               break;
+    case kEffectiveDuration:  *out = r.effective_duration;  break;
+    case kEffectiveConvexity: *out = r.effective_convexity; break;
+    case kCurveDv01:
+    default:                  *out = r.dv01;                break;
     }
 
     return FIR_OK;
 }
 
-fir_status_t fir_bond_effective_duration(const fir_bond_t  *bond,
+} /* namespace */
+
+fir_status_t fir_bond_effective_duration(fir_context_t     *ctx,
+                                         const fir_bond_t  *bond,
                                          const fir_curve_t *curve,
                                          double            *out_duration)
 {
-    return curve_risk_field(bond, curve, out_duration, 0);
+    return curve_risk_field(ctx, bond, curve, out_duration,
+                            kEffectiveDuration);
 }
 
-fir_status_t fir_bond_effective_convexity(const fir_bond_t  *bond,
+fir_status_t fir_bond_effective_convexity(fir_context_t     *ctx,
+                                          const fir_bond_t  *bond,
                                           const fir_curve_t *curve,
                                           double            *out_convexity)
 {
-    return curve_risk_field(bond, curve, out_convexity, 1);
+    return curve_risk_field(ctx, bond, curve, out_convexity,
+                            kEffectiveConvexity);
 }
 
-fir_status_t fir_bond_curve_dv01(const fir_bond_t  *bond,
+fir_status_t fir_bond_curve_dv01(fir_context_t     *ctx,
+                                 const fir_bond_t  *bond,
                                  const fir_curve_t *curve,
                                  double            *out_dv01)
 {
-    return curve_risk_field(bond, curve, out_dv01, 2);
+    return curve_risk_field(ctx, bond, curve, out_dv01, kCurveDv01);
 }
 
-fir_status_t fir_bond_key_rate_durations(const fir_bond_t  *bond,
+fir_status_t fir_bond_key_rate_durations(fir_context_t     *ctx,
+                                         const fir_bond_t  *bond,
                                          const fir_curve_t *curve,
                                          const double      *tenors,
                                          double            *out_krd,
                                          size_t             n)
 {
-    FIR_RETURN_IF_NULL(bond, FIR_E_NULL_ARG);
+    FIR_ENTRY(ctx, c);
+    FIR_RETURN_IF_NULL(c, FIR_E_NULL_ARG);
+    FIR_REQUIRE_PTR(c, bond, "bond");
+    FIR_REQUIRE_PTR(c, tenors, "tenors");
+    FIR_REQUIRE_PTR(c, out_krd, "out_krd");
 
     firisk::DiscountSource src;
     const fir_status_t vrv = make_source(curve, &src);
     if (vrv != FIR_OK)
-        return vrv;
+        return c->error().set(vrv, "curve: %s",
+                              firisk::status_message(vrv));
 
-    firisk::Context scratch;
-    return firisk::key_rate_durations(scratch,
-                                      *AS_CTYPE(firisk::Bond, bond),
-                                      src, tenors, out_krd, n, 1.0);
+    const fir_status_t rv = firisk::key_rate_durations(
+        *c, *AS_CTYPE(firisk::Bond, bond), src, tenors, out_krd, n,
+        c->bump_size());
+    if (rv != FIR_OK)
+        return c->error().set(rv, "key rate durations at a %g bp bump: %s",
+                              c->bump_size(), firisk::status_message(rv));
+
+    return FIR_OK;
 }
 
 } /* extern "C" */

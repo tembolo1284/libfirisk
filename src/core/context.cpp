@@ -1,4 +1,5 @@
 #include "context.hpp"
+#include "pricing/solve.hpp"
 
 namespace firisk {
 
@@ -25,8 +26,6 @@ Context::Context() noexcept
     , solver_max_iter_(100)
     , bump_size_(1.0)
     , error_()
-    , scratch_times_()
-    , scratch_amounts_()
     , scratch_values_()
 {
 }

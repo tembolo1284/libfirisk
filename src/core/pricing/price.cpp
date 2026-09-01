@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 
 #include "price.hpp"
 
@@ -101,13 +102,14 @@ fir_status_t pv_derivatives(const Bond       &bond,
         !(1.0 + yield / static_cast<double>(k) > 0.0))
         return FIR_E_BAD_ARG;
 
-    double pv = 0.0, dpv = 0.0, d2pv = 0.0;
+    double pv = 0.0, dpv = 0.0, d2pv = 0.0, twpv = 0.0;
 
     for (const Cashflow &cf : bond.cashflows()) {
         const DfDerivs d = df_derivs(yield, cf.time, comp, k);
         pv   += cf.amount * d.df;
         dpv  += cf.amount * d.d1;
         d2pv += cf.amount * d.d2;
+        twpv += cf.amount * d.df * cf.time;
     }
 
     if (!std::isfinite(pv))
@@ -116,6 +118,7 @@ fir_status_t pv_derivatives(const Bond       &bond,
     out->pv   = pv;
     out->dpv  = dpv;
     out->d2pv = d2pv;
+    out->twpv = twpv;
 
     return FIR_OK;
 }

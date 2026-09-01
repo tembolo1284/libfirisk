@@ -172,8 +172,6 @@ fir_status_t Bond::build_cashflows(Context &ctx) noexcept
 
     /* Size the shared scratch buffers once, here, so no risk call
        allocates. */
-    ctx.scratch_times().reserve(cashflows_.size());
-    ctx.scratch_amounts().reserve(cashflows_.size());
     ctx.scratch_values().reserve(cashflows_.size());
 
     return FIR_OK;

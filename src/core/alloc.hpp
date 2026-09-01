@@ -143,4 +143,6 @@ public:                                                                       \
     static void operator delete[](void *, void *) noexcept {}                 \
 private:
 
+    static_assert(true, "require a semicolon after FIR_IMPLEMENTS_ALLOCATORS")
+
 #endif /* FIRISK_CORE_ALLOC_HPP_INCLUDED */

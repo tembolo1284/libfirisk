@@ -42,6 +42,15 @@ static fir_status_t curve_bump(void *ud, double tenor, double bump_bp)
     return FIR_E_BAD_ARG;
 }
 
+static fir_status_t curve_bump_parallel(void *ud, double bump_bp)
+{
+    simple_curve_t *c = (simple_curve_t *)ud;
+    int i;
+    for (i = 0; i < NPILLAR; ++i)
+        c->bumps[i] += bump_bp * 1e-4;
+    return FIR_OK;
+}
+
 static fir_status_t curve_reset(void *ud)
 {
     memset(((simple_curve_t *)ud)->bumps, 0, sizeof(double) * NPILLAR);
@@ -52,13 +61,13 @@ int main(void)
 {
     static const double tenors[NPILLAR] = {1.0, 2.0, 3.0, 5.0, 7.0, 10.0};
 
-    fir_context_t *ctx = fir_context_new();
+    fir_context_t *ctx;
     fir_bond_def_t def;
     fir_bond_t    *bond;
     fir_curve_t    handle;
     simple_curve_t curve;
     double krd[NPILLAR];
-    double total = 0.0;
+    double total = 0.0, eff = 0.0;
     int i;
 
     memcpy(curve.tenors, tenors, sizeof tenors);
@@ -67,7 +76,9 @@ int main(void)
         curve.bumps[i] = 0.0;
     }
 
+    ctx = fir_context_new();
     fir_context_set_valuation_date(ctx, 20260831);
+    fir_context_set_bump_size(ctx, 1.0);
 
     memset(&def, 0, sizeof def);
     def.struct_size   = sizeof def;
@@ -81,21 +92,26 @@ int main(void)
     bond = fir_bond_new(ctx, &def);
     if (!bond) {
         fprintf(stderr, "%s\n", fir_context_last_message(ctx));
+        fir_context_free(ctx);
         return 1;
     }
 
     memset(&handle, 0, sizeof handle);
-    handle.struct_size  = sizeof handle;
-    handle.user_data    = &curve;
-    handle.discount     = curve_discount;
-    handle.bump         = curve_bump;
-    handle.reset        = curve_reset;
-    handle.pillars      = tenors;
-    handle.pillar_count = NPILLAR;
+    handle.struct_size   = sizeof handle;
+    handle.user_data     = &curve;
+    handle.discount      = curve_discount;
+    handle.bump          = curve_bump;
+    handle.bump_parallel = curve_bump_parallel;
+    handle.reset         = curve_reset;
+    handle.pillars       = tenors;
+    handle.pillar_count  = NPILLAR;
 
-    if (fir_bond_key_rate_durations(bond, &handle, tenors, krd,
+    if (fir_bond_key_rate_durations(ctx, bond, &handle, tenors, krd,
                                     NPILLAR) != FIR_OK) {
-        fprintf(stderr, "key rate durations failed\n");
+        fprintf(stderr, "key rate durations: %s\n",
+                fir_context_last_message(ctx));
+        fir_bond_free(bond);
+        fir_context_free(ctx);
         return 1;
     }
 
@@ -104,10 +120,15 @@ int main(void)
         total += krd[i];
     }
 
-    /* Key rate durations should sum to roughly the effective duration.
-       They will not match exactly: this curve's bumps are piecewise
-       flat with no interpolation decay between pillars. */
     printf("sum    %10.6f\n", total);
+
+    if (fir_bond_effective_duration(ctx, bond, &handle, &eff) == FIR_OK)
+        printf("eff    %10.6f\n", eff);
+
+    /* The key rate durations should sum to roughly the effective
+       duration. They will not match exactly here: this curve's pillar
+       bumps are piecewise flat with no interpolation decay, so each
+       bucket covers a wider span than a real curve's would. */
 
     fir_bond_free(bond);
     fir_context_free(ctx);
