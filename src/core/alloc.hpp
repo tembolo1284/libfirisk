@@ -24,7 +24,7 @@ extern fir_panic_fn    g_panic_handler;
 /* We do not propagate exceptions across the C ABI, and nothing in this
    library allocates unbounded amounts. So allocation failure is fatal
    rather than reported. The caller can install a handler with
-   fir_set_panic_handler to log and abort on its own terms. */
+   fir_set_panic_handler to log on its own terms before we abort. */
 [[noreturn]] void panic(const char *fmt, ...) noexcept FIR_PRINTF_FORMAT(1, 2);
 
 [[noreturn]] void fatal_alloc_failure(std::size_t size) noexcept;
@@ -104,7 +104,11 @@ inline char *dup_cstring(const char *str)
 
 /* Place in the private section of every core class. Covers sized and
    aligned deletes too — omitting those lets the compiler pair our
-   operator new with the global operator delete on some paths. */
+   operator new with the global operator delete on some paths.
+
+   The trailing static_assert absorbs the semicolon at the use site, so
+   `FIR_IMPLEMENTS_ALLOCATORS;` is not a stray declaration under
+   -Wpedantic. The macro leaves the class in a private section. */
 #define FIR_IMPLEMENTS_ALLOCATORS                                             \
 public:                                                                       \
     static void *operator new(std::size_t size)                               \
@@ -141,8 +145,7 @@ public:                                                                       \
         { return ptr; }                                                       \
     static void operator delete(void *, void *) noexcept {}                   \
     static void operator delete[](void *, void *) noexcept {}                 \
-private:
-
-    static_assert(true, "require a semicolon after FIR_IMPLEMENTS_ALLOCATORS")
+private:                                                                      \
+    static_assert(true, "FIR_IMPLEMENTS_ALLOCATORS requires a semicolon")
 
 #endif /* FIRISK_CORE_ALLOC_HPP_INCLUDED */

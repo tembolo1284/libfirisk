@@ -1,24 +1,8 @@
 #include "context.hpp"
-#include "pricing/solve.hpp"
+
+#include "time/date.hpp"
 
 namespace firisk {
-
-namespace {
-
-/* Structural YYYYMMDD check only. Once time/date.hpp lands this
-   delegates to Date::is_valid, which knows about leap years. */
-bool plausible_date(fir_date_t date) noexcept
-{
-    if (date < 10000101 || date > 99991231)
-        return false;
-
-    int month = (date / 100) % 100;
-    int day   = date % 100;
-
-    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
-}
-
-} /* namespace */
 
 Context::Context() noexcept
     : valuation_date_(0)
@@ -32,7 +16,9 @@ Context::Context() noexcept
 
 fir_status_t Context::set_valuation_date(fir_date_t date) noexcept
 {
-    if (!plausible_date(date))
+    /* Date::is_valid_yyyymmdd knows month lengths and leap years; a
+       bare 1-31 day check would accept 30 February. */
+    if (!Date::is_valid_yyyymmdd(date))
         return error_.set(FIR_E_BAD_DATE,
                           "valuation date %d is not a valid YYYYMMDD date",
                           static_cast<int>(date));

@@ -5,6 +5,7 @@
 #include "alloc.hpp"
 #include "containers.hpp"
 #include "error.hpp"
+#include "pricing/solve.hpp"
 
 namespace firisk {
 
