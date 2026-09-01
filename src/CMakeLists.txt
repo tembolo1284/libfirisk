@@ -26,9 +26,14 @@ endif()
 
 add_library(firisk::firisk ALIAS firisk)
 
+# PROJECT_SOURCE_DIR, not CMAKE_SOURCE_DIR: the latter points at whatever
+# directory started the configure, which is bindings/python when
+# scikit-build-core drives the wheel build. PROJECT_SOURCE_DIR is scoped
+# to the nearest enclosing project() call and always lands on the repo
+# root, standalone or nested.
 target_include_directories(firisk
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -47,14 +52,14 @@ if(FIRISK_BUILD_SHARED)
         # No --exclude-libs on the Apple linker, so the symbol list is
         # what keeps statically linked dependencies out of our exports.
         target_link_options(firisk PRIVATE
-            "-Wl,-exported_symbols_list,${CMAKE_SOURCE_DIR}/symbols/firisk.exported")
+            "-Wl,-exported_symbols_list,${PROJECT_SOURCE_DIR}/symbols/firisk.exported")
         set_target_properties(firisk PROPERTIES
-            LINK_DEPENDS "${CMAKE_SOURCE_DIR}/symbols/firisk.exported")
+            LINK_DEPENDS "${PROJECT_SOURCE_DIR}/symbols/firisk.exported")
     elseif(UNIX)
         target_link_options(firisk PRIVATE
-            "-Wl,--version-script,${CMAKE_SOURCE_DIR}/symbols/firisk.map"
+            "-Wl,--version-script,${PROJECT_SOURCE_DIR}/symbols/firisk.map"
             "-Wl,--exclude-libs,ALL")
         set_target_properties(firisk PROPERTIES
-            LINK_DEPENDS "${CMAKE_SOURCE_DIR}/symbols/firisk.map")
+            LINK_DEPENDS "${PROJECT_SOURCE_DIR}/symbols/firisk.map")
     endif()
 endif()

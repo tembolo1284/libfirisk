@@ -5,7 +5,7 @@ project(firisk
     DESCRIPTION "Fixed income risk library"
     LANGUAGES C CXX)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
 option(FIRISK_BUILD_SHARED       "Build a shared library"      ON)
 option(FIRISK_BUILD_TESTS        "Build the C smoke test"      ON)
@@ -35,40 +35,54 @@ include(Sanitizers)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# True only when this is the top-level project. The Python bindings add
+# this directory as a subproject, and in that case the tests, examples,
+# and install rules are not wanted.
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(FIRISK_IS_TOP_LEVEL ON)
+else()
+    set(FIRISK_IS_TOP_LEVEL OFF)
+endif()
+
 add_subdirectory(src)
 
-if(FIRISK_BUILD_TESTS)
+if(FIRISK_BUILD_TESTS AND FIRISK_IS_TOP_LEVEL)
     enable_testing()
     add_subdirectory(tests/c_smoke)
 endif()
 
-if(FIRISK_BUILD_EXAMPLES)
+if(FIRISK_BUILD_EXAMPLES AND FIRISK_IS_TOP_LEVEL)
     add_subdirectory(examples)
 endif()
 
-install(TARGETS firisk
-    EXPORT firiskTargets
-    LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
+# Installing the native library only makes sense for a standalone build.
+# When the bindings pull this in, the extension links it statically and
+# the .so is the only thing that ships.
+if(FIRISK_IS_TOP_LEVEL)
+    install(TARGETS firisk
+        EXPORT firiskTargets
+        LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-install(FILES include/firisk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(FILES include/firisk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(EXPORT firiskTargets
-    FILE firiskTargets.cmake
-    NAMESPACE firisk::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
+    install(EXPORT firiskTargets
+        FILE firiskTargets.cmake
+        NAMESPACE firisk::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
 
-configure_package_config_file(
-    cmake/firiskConfig.cmake.in
-    "${CMAKE_CURRENT_BINARY_DIR}/firiskConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
+    configure_package_config_file(
+        cmake/firiskConfig.cmake.in
+        "${CMAKE_CURRENT_BINARY_DIR}/firiskConfig.cmake"
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
 
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/firiskConfigVersion.cmake"
-    COMPATIBILITY SameMinorVersion)
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/firiskConfigVersion.cmake"
+        COMPATIBILITY SameMinorVersion)
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/firiskConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/firiskConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/firiskConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/firiskConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/firisk)
+endif()
