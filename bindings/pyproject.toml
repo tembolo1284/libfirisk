@@ -1,0 +1,36 @@
+[build-system]
+requires = ["scikit-build-core >= 0.9", "nanobind >= 2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "firisk"
+version = "0.1.0"
+description = "Fixed income risk analytics"
+readme = "../../README.md"
+requires-python = ">= 3.9"
+license = { text = "MIT" }
+authors = [{ name = "Paul Lopez" }]
+classifiers = [
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = ["numpy >= 1.22"]
+
+[project.optional-dependencies]
+test = ["pytest >= 7.0"]
+
+[tool.scikit-build]
+minimum-version = "0.9"
+build-dir = "build/{wheel_tag}"
+wheel.py-api = "cp312"
+cmake.version = ">= 3.21"
+
+[tool.scikit-build.cmake.define]
+FIRISK_BUILD_SHARED = "OFF"
+FIRISK_BUILD_TESTS = "OFF"
+FIRISK_BUILD_EXAMPLES = "OFF"
+FIRISK_WARNINGS_AS_ERRORS = "OFF"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
