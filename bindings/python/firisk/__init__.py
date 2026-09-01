@@ -90,7 +90,17 @@ def from_yyyymmdd(value: int) -> _datetime.date:
     """Inverse of :func:`to_yyyymmdd`."""
     return _datetime.date(value // 10000, (value // 100) % 100, value % 100)
 
+def _enum_value(value):
+    """Pass a nanobind enum through unchanged; coerce anything else.
 
+    nanobind's nb::enum_ types are not IntEnum and have no __int__, so
+    int() on them raises. They convert to the underlying C enum on their
+    own when handed to a bound function, so the right move is to leave
+    them alone and only coerce genuine Python ints.
+    """
+    if isinstance(value, int):
+        return int(value)
+    return value
 # --------------------------------------------------------------------
 # calendar
 # --------------------------------------------------------------------
