@@ -1,0 +1,18 @@
+function(firisk_enable_sanitizers target)
+    if(NOT FIRISK_SANITIZER OR MSVC)
+        return()
+    endif()
+
+    if(FIRISK_SANITIZER STREQUAL "address")
+        set(flags -fsanitize=address,undefined -fno-omit-frame-pointer)
+    elseif(FIRISK_SANITIZER STREQUAL "thread")
+        set(flags -fsanitize=thread)
+    elseif(FIRISK_SANITIZER STREQUAL "memory")
+        set(flags -fsanitize=memory -fno-omit-frame-pointer)
+    else()
+        message(FATAL_ERROR "unknown FIRISK_SANITIZER: ${FIRISK_SANITIZER}")
+    endif()
+
+    target_compile_options(${target} PRIVATE ${flags})
+    target_link_options(${target} PRIVATE ${flags})
+endfunction()

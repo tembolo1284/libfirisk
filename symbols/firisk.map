@@ -1,0 +1,6 @@
+FIRISK_0.1 {
+    global:
+        fir_*;
+    local:
+        *;
+};
