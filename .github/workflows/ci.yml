@@ -1,0 +1,282 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch cancels the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # Native library across compilers and build types.
+  # ------------------------------------------------------------------
+  native:
+    name: ${{ matrix.compiler }} / ${{ matrix.build_type }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [debug, release]
+        include:
+          - compiler: gcc
+            build_type: asan
+          - compiler: clang
+            build_type: asan
+          - compiler: gcc
+            build_type: static
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            # libc++ rather than the system libstdc++: clang is tested
+            # against its own standard library, and mixing a newer
+            # libstdc++ with an older clang breaks on C++20 headers.
+            sudo apt-get install -y clang libc++-dev libc++abi-dev
+          fi
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.compiler }}-${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.compiler }}-${{ matrix.build_type }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.compiler }}-${{ matrix.build_type }}
+
+      - name: Run examples
+        if: matrix.build_type != 'static'
+        run: |
+          for exe in build/${{ matrix.compiler }}-${{ matrix.build_type }}/examples/fir_*; do
+            echo "--- $(basename "$exe")"
+            "$exe"
+          done
+
+      # The exported surface is part of the contract, so it is checked
+      # rather than assumed. Anything outside fir_* leaking out of the
+      # shared object is a bug.
+      - name: Check exported symbols
+        if: matrix.build_type == 'release' && matrix.compiler == 'gcc'
+        run: |
+          lib=build/gcc-release/src/libfirisk.so
+          leaked=$(nm -D --defined-only "$lib" \
+                     | awk '{print $3}' \
+                     | grep -v '^fir_' \
+                     | grep -v '^_' || true)
+          if [ -n "$leaked" ]; then
+            echo "symbols leaked from the shared library:"
+            echo "$leaked"
+            exit 1
+          fi
+          echo "only fir_* is exported"
+
+  # ------------------------------------------------------------------
+  # CFFI suite against the built shared library. This is the primary
+  # test bed: no compilation, and it exercises the real C ABI.
+  # ------------------------------------------------------------------
+  cffi:
+    name: CFFI (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Build the library
+        run: |
+          cmake --preset gcc-debug
+          cmake --build --preset gcc-debug
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip cffi pytest
+
+      - name: Run the CFFI suite
+        env:
+          FIRISK_LIBRARY: build/gcc-debug/src/libfirisk.so
+        run: python -m pytest tests/python -v
+
+  # ------------------------------------------------------------------
+  # nanobind extension.
+  # ------------------------------------------------------------------
+  bindings:
+    name: Bindings (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Install the extension
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pytest
+          python -m pip install ./bindings/python -v
+
+      - name: Run the binding tests
+        run: python -m pytest bindings/python/tests -v
+
+  # ------------------------------------------------------------------
+  # The header has to stay parseable as C. This is what stops a C++ism
+  # from creeping into the public surface.
+  # ------------------------------------------------------------------
+  header-hygiene:
+    name: Header hygiene
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the header as C89, C99, and C11
+        run: |
+          for std in c89 c99 c11 c17; do
+            echo "--- $std"
+            echo '#include "firisk.h"' > /tmp/probe.c
+            echo 'int main(void) { return 0; }' >> /tmp/probe.c
+            gcc -std=$std -Wall -Wextra -Werror -pedantic \
+                -Iinclude -c /tmp/probe.c -o /tmp/probe.o
+          done
+          echo "header is clean C"
+
+      - name: Compile the header as C++
+        run: |
+          for std in c++11 c++17 c++20; do
+            echo "--- $std"
+            echo '#include "firisk.h"' > /tmp/probe.cpp
+            echo 'int main() { return 0; }' >> /tmp/probe.cpp
+            g++ -std=$std -Wall -Wextra -Werror -pedantic \
+                -Iinclude -c /tmp/probe.cpp -o /tmp/probe.o
+          done
+          echo "header is clean C++"
+
+      # FIR_NOINCLUDE is what lets binding generators parse the header
+      # standalone. If it stops working, CFFI breaks.
+      - name: Check FIR_NOINCLUDE strips every system include
+        run: |
+          output=$(gcc -E -P -DFIR_API= -DFIR_NOINCLUDE -Iinclude \
+                       include/firisk.h)
+          if echo "$output" | grep -q '#include'; then
+            echo "FIR_NOINCLUDE left an include behind:"
+            echo "$output" | grep '#include'
+            exit 1
+          fi
+          echo "preprocessed cleanly, $(echo "$output" | wc -l) lines"
+
+  # ------------------------------------------------------------------
+  # Installed-package consumption. Catches broken export or config
+  # files, which nothing else here would notice.
+  # ------------------------------------------------------------------
+  install:
+    name: Install and consume
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Build and install
+        run: |
+          cmake --preset gcc-release
+          cmake --build --preset gcc-release
+          cmake --install build/gcc-release --prefix /tmp/firisk-install
+
+      - name: Consume via find_package
+        run: |
+          mkdir -p /tmp/consumer
+          cd /tmp/consumer
+
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.21)
+          project(consumer LANGUAGES C)
+          find_package(firisk REQUIRED)
+          add_executable(consumer main.c)
+          target_link_libraries(consumer PRIVATE firisk::firisk m)
+          EOF
+
+          cat > main.c <<'EOF'
+          #include <stdio.h>
+          #include <string.h>
+          #include "firisk.h"
+
+          int main(void)
+          {
+              fir_context_t *ctx = fir_context_new();
+              fir_bond_def_t def;
+              fir_bond_t *bond;
+              double price = 0.0;
+
+              if (!fir_is_compatible_dll())
+                  return 1;
+
+              fir_context_set_valuation_date(ctx, 20260831);
+
+              memset(&def, 0, sizeof def);
+              def.struct_size   = sizeof def;
+              def.issue_date    = 20240215;
+              def.maturity_date = 20340215;
+              def.coupon_rate   = 0.045;
+              def.face          = 100.0;
+              def.frequency     = FIR_FREQ_SEMIANNUAL;
+              def.daycount      = FIR_DC_THIRTY_360_BOND;
+
+              bond = fir_bond_new(ctx, &def);
+              if (!bond) {
+                  fprintf(stderr, "%s\n", fir_context_last_message(ctx));
+                  return 1;
+              }
+
+              if (fir_bond_price_from_yield(bond, 0.05, FIR_COMP_PERIODIC,
+                                            &price) != FIR_OK)
+                  return 1;
+
+              printf("price %.6f\n", price);
+
+              fir_bond_free(bond);
+              fir_context_free(ctx);
+              return 0;
+          }
+          EOF
+
+          cmake -S . -B build -DCMAKE_PREFIX_PATH=/tmp/firisk-install
+          cmake --build build
+          LD_LIBRARY_PATH=/tmp/firisk-install/lib ./build/consumer

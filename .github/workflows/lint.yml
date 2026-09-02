@@ -1,0 +1,37 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-tidy
+
+      - name: Generate the compilation database
+        run: cmake --preset gcc-debug
+
+      - name: Run clang-tidy
+        run: |
+          find src -name '*.cpp' -print0 \
+            | xargs -0 clang-tidy -p build/gcc-debug --quiet
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck build.sh

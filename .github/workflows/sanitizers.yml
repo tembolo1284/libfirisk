@@ -1,0 +1,71 @@
+name: Sanitizers
+
+on:
+  schedule:
+    # 04:00 UTC daily.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  sanitize:
+    name: ${{ matrix.compiler }} / ${{ matrix.sanitizer }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            sanitizer: address
+            preset: gcc-asan
+          - compiler: clang
+            sanitizer: address
+            preset: clang-asan
+          - compiler: clang
+            sanitizer: thread
+            preset: clang-tsan
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang libc++-dev libc++abi-dev
+          fi
+
+      - name: Build
+        run: |
+          cmake --preset ${{ matrix.preset }}
+          cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        env:
+          # halt_on_error makes the first finding fail the run rather
+          # than letting later output bury it.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Run examples under the sanitizer
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        run: |
+          for exe in build/${{ matrix.preset }}/examples/fir_*; do
+            echo "--- $(basename "$exe")"
+            "$exe"
+          done
+
+      # Python is not instrumented, so libasan has to be preloaded to
+      # get ahead of it in the load order.
+      - name: CFFI suite under the sanitizer
+        if: matrix.sanitizer == 'address' && matrix.compiler == 'gcc'
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+          FIRISK_LIBRARY: build/gcc-asan/src/libfirisk.so
+        run: |
+          python -m pip install --upgrade pip cffi pytest
+          LD_PRELOAD=$(gcc -print-file-name=libasan.so) \
+            python -m pytest tests/python -q
