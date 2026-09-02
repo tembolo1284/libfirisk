@@ -13,4 +13,9 @@ if(FIRISK_LIBM)
     target_link_libraries(fir_c_smoke PRIVATE ${FIRISK_LIBM})
 endif()
 
+# The library links libasan under a sanitizer preset. If the executable
+# is not also instrumented, libasan arrives as a transitive dependency
+# rather than first in the load order, and ASan refuses to start.
+firisk_enable_sanitizers(fir_c_smoke)
+
 add_test(NAME c_smoke COMMAND fir_c_smoke)
