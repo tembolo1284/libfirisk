@@ -12,3 +12,9 @@ if(FIRISK_LIBM)
     target_link_libraries(fir_price_bond  PRIVATE ${FIRISK_LIBM})
     target_link_libraries(fir_bucket_risk PRIVATE ${FIRISK_LIBM})
 endif()
+
+# The library links libasan under a sanitizer preset. An executable that
+# is not itself instrumented gets libasan as a transitive dependency
+# rather than first in the load order, and ASan refuses to start.
+firisk_enable_sanitizers(fir_price_bond)
+firisk_enable_sanitizers(fir_bucket_risk)
