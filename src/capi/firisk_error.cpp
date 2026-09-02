@@ -37,9 +37,24 @@ fir_status_t ErrorState::setv(fir_status_t status,
         return status;
     }
 
+#if defined(__clang__)
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wformat-nonliteral"
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+
     /* vsnprintf always null-terminates and never allocates. A truncated
        diagnostic is strictly better than failing inside the error path. */
     std::vsnprintf(message_, kErrorMessageSize, fmt, ap);
+
+#if defined(__clang__)
+#  pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
+
     return status;
 }
 
