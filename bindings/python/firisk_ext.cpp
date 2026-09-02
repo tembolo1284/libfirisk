@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -18,15 +19,10 @@ namespace {
 /* errors                                                              */
 /* ------------------------------------------------------------------ */
 
-/* Every status code becomes an exception. Callers get Python
-   semantics; the C ABI keeps its return codes. */
-void raise_status(fir_status_t status, const char *what)
+/* Bad input from the caller is a ValueError; anything else is a failure
+   of the operation rather than of its arguments. */
+bool is_caller_error(fir_status_t status)
 {
-    if (status == FIR_OK)
-        return;
-
-    std::string message = std::string(what) + ": " + fir_strerror(status);
-
     switch (status) {
     case FIR_E_NULL_ARG:
     case FIR_E_BAD_ARG:
@@ -34,31 +30,42 @@ void raise_status(fir_status_t status, const char *what)
     case FIR_E_BAD_SCHEDULE:
     case FIR_E_UNSUPPORTED:
     case FIR_E_NO_BUMP_SUPPORT:
-        throw nb::value_error(message.c_str());
-    case FIR_E_BUFFER_TOO_SMALL:
-    case FIR_E_BAD_STRUCT_SIZE:
-        throw std::runtime_error(message);
-    case FIR_E_NO_CONVERGENCE:
-        throw std::runtime_error(message);
-    case FIR_E_ALLOC:
-        throw std::bad_alloc();
+        return true;
     default:
-        throw std::runtime_error(message);
+        return false;
     }
 }
 
-/* Same, but pulls the richer diagnostic off the context when there is
-   one. The pointer is only valid until the next call, so it is copied
-   immediately. */
+void raise_status(fir_status_t status, const char *what)
+{
+    if (status == FIR_OK)
+        return;
+
+    if (status == FIR_E_ALLOC)
+        throw std::bad_alloc();
+
+    std::string message = std::string(what) + ": " + fir_strerror(status);
+
+    if (is_caller_error(status))
+        throw nb::value_error(message.c_str());
+
+    throw std::runtime_error(message);
+}
+
+/* Same, but pulls the richer diagnostic off the context. The pointer is
+   only valid until the next call, so it is copied immediately. */
 void raise_context(fir_context_t *ctx, fir_status_t status, const char *what)
 {
     if (status == FIR_OK)
         return;
 
+    if (status == FIR_E_ALLOC)
+        throw std::bad_alloc();
+
     std::string detail = fir_context_last_message(ctx);
     std::string message = std::string(what) + ": " + detail;
 
-    if (status == FIR_E_NO_BUMP_SUPPORT || status == FIR_E_BAD_ARG)
+    if (is_caller_error(status))
         throw nb::value_error(message.c_str());
 
     throw std::runtime_error(message);
@@ -150,9 +157,9 @@ private:
         return static_cast<FlatCurve *>(ud)->discount(t);
     }
 
-    /* A flat curve has no pillars, so any tenor moves the whole
-       level. That makes key rate durations degenerate but keeps the
-       class usable for effective risk. */
+    /* A flat curve has no pillars, so any tenor moves the whole level.
+       That makes key rate durations degenerate but keeps the class
+       usable for effective risk. */
     static fir_status_t bump_cb(void *ud, double, double bump_bp)
     {
         static_cast<FlatCurve *>(ud)->rate_ += bump_bp * 1e-4;
@@ -177,10 +184,10 @@ private:
     double      rate_;
 };
 
-/* Piecewise-linear zero curve over pillar tenors, with per-pillar
-   bumps that decay linearly to the neighbouring pillars. This is the
-   one that makes key rate durations meaningful: a bump at 5y leaves
-   the 2y and 10y points untouched. */
+/* Piecewise-linear zero curve over pillar tenors, with per-pillar bumps
+   that decay linearly to the neighbouring pillars. This is the one that
+   makes key rate durations meaningful: a bump at 5y leaves the 2y and
+   10y points untouched. */
 class ZeroCurve : public Curve {
 public:
     ZeroCurve(std::vector<double> tenors, std::vector<double> zeros)
@@ -218,8 +225,8 @@ public:
     const std::vector<double> &tenors() const { return tenors_; }
 
     /* Linear interpolation on zero rates, flat extrapolation at both
-       ends. Bumps are interpolated the same way, so a pillar bump
-       decays to zero at its neighbours. */
+       ends. Bumps are interpolated the same way, so a pillar bump decays
+       to zero at its neighbours. */
     double zero_rate(double t) const
     {
         const size_t n = tenors_.size();
@@ -234,8 +241,7 @@ public:
             ++hi;
 
         const size_t lo = hi - 1;
-        const double w =
-            (t - tenors_[lo]) / (tenors_[hi] - tenors_[lo]);
+        const double w = (t - tenors_[lo]) / (tenors_[hi] - tenors_[lo]);
 
         const double a = zeros_[lo] + bumps_[lo];
         const double b = zeros_[hi] + bumps_[hi];
@@ -289,9 +295,9 @@ private:
 };
 
 /* Escape hatch: wraps any Python object exposing discount(t), and
-   optionally bump/bump_parallel/reset. Each discount call reacquires
-   the GIL, so this costs one Python round trip per cashflow per bump.
-   Prefer ZeroCurve where it fits. */
+   optionally bump/bump_parallel/reset. Each discount call reacquires the
+   GIL, so this costs one Python round trip per cashflow per bump. Prefer
+   ZeroCurve where it fits. */
 class PyCurve : public Curve {
 public:
     explicit PyCurve(nb::object obj) : obj_(std::move(obj))
@@ -319,9 +325,9 @@ public:
     const fir_curve_t *handle() override { return &curve_; }
 
 private:
-    /* Exceptions must not cross back into C. A raising callback
-       returns a sentinel the library rejects as a bad discount
-       factor, or an error status for the bump hooks. */
+    /* Exceptions must not cross back into C. A raising callback returns
+       a sentinel the library rejects as a bad discount factor, or an
+       error status for the bump hooks. */
     static double discount_cb(void *ud, double t)
     {
         PyCurve *self = static_cast<PyCurve *>(ud);
@@ -381,8 +387,6 @@ private:
 /* context and bond                                                    */
 /* ------------------------------------------------------------------ */
 
-class Bond;
-
 class Context {
 public:
     Context() : handle_(fir_context_new())
@@ -406,8 +410,6 @@ public:
                       "valuation_date");
     }
 
-    int valuation_date() const { return valuation_date_cache_; }
-
     void set_bump_size(double bp)
     {
         raise_context(handle_, fir_context_set_bump_size(handle_, bp),
@@ -428,11 +430,8 @@ public:
 
     fir_context_t *handle() const { return handle_; }
 
-    void cache_valuation_date(int date) { valuation_date_cache_ = date; }
-
 private:
     fir_context_t *handle_;
-    int            valuation_date_cache_ = 0;
 };
 
 class Bond {
@@ -487,8 +486,8 @@ public:
         return n;
     }
 
-    /* Returns (times, amounts) as NumPy arrays. The buffers are owned
-       by capsules so NumPy frees them, not us. */
+    /* Returns (times, amounts) as NumPy arrays. The buffers are owned by
+       capsules so NumPy frees them, not us. */
     nb::tuple cashflows() const
     {
         const size_t n = cashflow_count();
@@ -496,8 +495,7 @@ public:
         double *times = new double[n];
         double *amounts = new double[n];
 
-        const fir_status_t rv =
-            fir_bond_cashflows(handle_, times, amounts, n);
+        const fir_status_t rv = fir_bond_cashflows(handle_, times, amounts, n);
         if (rv != FIR_OK) {
             delete[] times;
             delete[] amounts;
@@ -542,9 +540,8 @@ public:
     double price_from_curve(Curve &curve) const
     {
         double out = 0.0;
-        raise_status(
-            fir_bond_price_from_curve(handle_, curve.handle(), &out),
-            "price_from_curve");
+        raise_status(fir_bond_price_from_curve(handle_, curve.handle(), &out),
+                     "price_from_curve");
         return out;
     }
 
@@ -658,9 +655,13 @@ NB_MODULE(_firisk, m)
     m.def("version", &fir_get_version_string,
           "Library version as a string.");
 
-    /* -- enums -- */
+    /* -- enums --
+       nb::is_arithmetic() gives these __int__ and the integer operators.
+       The bound signatures below take plain int, because the C ABI uses
+       int typedefs rather than the enum types, so without this flag an
+       enum value will not convert at the call boundary. */
 
-    nb::enum_<fir_daycount_e>(m, "DayCount")
+    nb::enum_<fir_daycount_e>(m, "DayCount", nb::is_arithmetic())
         .value("ACT_360", FIR_DC_ACT_360)
         .value("ACT_365F", FIR_DC_ACT_365F)
         .value("ACT_ACT_ISDA", FIR_DC_ACT_ACT_ISDA)
@@ -668,25 +669,25 @@ NB_MODULE(_firisk, m)
         .value("THIRTY_360_BOND", FIR_DC_THIRTY_360_BOND)
         .value("THIRTY_E_360", FIR_DC_THIRTY_E_360);
 
-    nb::enum_<fir_frequency_e>(m, "Frequency")
+    nb::enum_<fir_frequency_e>(m, "Frequency", nb::is_arithmetic())
         .value("ZERO", FIR_FREQ_ZERO)
         .value("ANNUAL", FIR_FREQ_ANNUAL)
         .value("SEMIANNUAL", FIR_FREQ_SEMIANNUAL)
         .value("QUARTERLY", FIR_FREQ_QUARTERLY)
         .value("MONTHLY", FIR_FREQ_MONTHLY);
 
-    nb::enum_<fir_compounding_e>(m, "Compounding")
+    nb::enum_<fir_compounding_e>(m, "Compounding", nb::is_arithmetic())
         .value("SIMPLE", FIR_COMP_SIMPLE)
         .value("PERIODIC", FIR_COMP_PERIODIC)
         .value("CONTINUOUS", FIR_COMP_CONTINUOUS);
 
-    nb::enum_<fir_bdc_e>(m, "BusinessDayConvention")
+    nb::enum_<fir_bdc_e>(m, "BusinessDayConvention", nb::is_arithmetic())
         .value("NONE", FIR_BDC_NONE)
         .value("FOLLOWING", FIR_BDC_FOLLOWING)
         .value("MODIFIED_FOLLOWING", FIR_BDC_MODIFIED_FOLLOWING)
         .value("PRECEDING", FIR_BDC_PRECEDING);
 
-    nb::enum_<fir_weekend_e>(m, "Weekend")
+    nb::enum_<fir_weekend_e>(m, "Weekend", nb::is_arithmetic())
         .value("NONE", FIR_WEEKEND_NONE)
         .value("SAT_SUN", FIR_WEEKEND_SAT_SUN)
         .value("FRI_SAT", FIR_WEEKEND_FRI_SAT);

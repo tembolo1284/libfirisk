@@ -8,8 +8,8 @@ a convenience that would be awkward to express in C++.
     >>> ctx = firisk.Context(valuation_date=20260831)
     >>> bond = firisk.Bond(ctx, issue_date=20240215,
     ...                    maturity_date=20340215, coupon_rate=0.045)
-    >>> round(bond.price_from_yield(0.05), 4)
-    96.6...
+    >>> round(bond.price_from_yield(0.05), 2)
+    96.7
 """
 
 from __future__ import annotations
@@ -90,17 +90,7 @@ def from_yyyymmdd(value: int) -> _datetime.date:
     """Inverse of :func:`to_yyyymmdd`."""
     return _datetime.date(value // 10000, (value // 100) % 100, value % 100)
 
-def _enum_value(value):
-    """Pass a nanobind enum through unchanged; coerce anything else.
 
-    nanobind's nb::enum_ types are not IntEnum and have no __int__, so
-    int() on them raises. They convert to the underlying C enum on their
-    own when handed to a bound function, so the right move is to leave
-    them alone and only coerce genuine Python ints.
-    """
-    if isinstance(value, int):
-        return int(value)
-    return value
 # --------------------------------------------------------------------
 # calendar
 # --------------------------------------------------------------------
@@ -118,11 +108,11 @@ class Calendar(_Calendar):
 
     def __init__(self,
                  holidays: Iterable = (),
-                 weekend: int = Weekend.SAT_SUN):
+                 weekend=Weekend.SAT_SUN):
         super().__init__()
 
         if weekend != Weekend.SAT_SUN:
-            self.set_weekend(int(weekend))
+            self.set_weekend(weekend)
 
         holidays = list(holidays)
         if holidays:
@@ -153,6 +143,11 @@ class Context(_firisk.Context):
                  solver_max_iter: int | None = None):
         super().__init__()
 
+        # Set before any setter runs, so reading these back never raises
+        # on a context that was constructed bare.
+        self._valuation_date = 0
+        self._bump_size = 1.0
+
         if valuation_date is not None:
             self.valuation_date = valuation_date
         if bump_size is not None:
@@ -164,6 +159,7 @@ class Context(_firisk.Context):
 
     @property
     def valuation_date(self) -> int:
+        """Valuation date as YYYYMMDD; 0 if never set."""
         return self._valuation_date
 
     @valuation_date.setter
@@ -174,12 +170,18 @@ class Context(_firisk.Context):
 
     @property
     def bump_size(self) -> float:
-        return getattr(self, "_bump_size", 1.0)
+        """Bump size in basis points used by all curve risk."""
+        return self._bump_size
 
     @bump_size.setter
     def bump_size(self, bp: float) -> None:
         self.set_bump_size(bp)
         self._bump_size = bp
+
+    def __repr__(self) -> str:
+        when = (from_yyyymmdd(self._valuation_date)
+                if self._valuation_date else "unset")
+        return f"Context(valuation_date={when}, bump_size={self._bump_size:g}bp)"
 
 
 # --------------------------------------------------------------------
@@ -200,45 +202,52 @@ class Bond(_firisk.Bond):
                  maturity_date,
                  coupon_rate: float,
                  face: float = 100.0,
-                 frequency: int = Frequency.SEMIANNUAL,
-                 daycount: int = DayCount.THIRTY_360_BOND,
-                 business_day_convention: int = BusinessDayConvention.NONE,
+                 frequency=Frequency.SEMIANNUAL,
+                 daycount=DayCount.THIRTY_360_BOND,
+                 business_day_convention=BusinessDayConvention.NONE,
                  first_coupon_date=None,
                  end_of_month: bool = False,
                  calendar: Calendar | None = None):
+        # Recorded before the base constructor so __repr__ works on a
+        # half-built object in a traceback. _built gates the one repr
+        # field that would touch the extension.
+        self._built = False
+        self._coupon_rate = coupon_rate
+        self._face = face
+        self._maturity_date = to_yyyymmdd(maturity_date)
+        self._issue_date = to_yyyymmdd(issue_date)
+
         super().__init__(
             ctx,
-            to_yyyymmdd(issue_date),
-            to_yyyymmdd(maturity_date),
+            self._issue_date,
+            self._maturity_date,
             coupon_rate,
             face,
-            int(frequency),
-            int(daycount),
-            int(business_day_convention),
+            frequency,
+            daycount,
+            business_day_convention,
             0 if first_coupon_date is None else to_yyyymmdd(first_coupon_date),
             end_of_month,
             calendar,
         )
 
         self._ctx = ctx
-        self._coupon_rate = coupon_rate
-        self._face = face
-        self._maturity_date = to_yyyymmdd(maturity_date)
+        self._built = True
 
     # -- convenience over the compiled methods --
 
     def dirty_price_from_yield(self, yield_: float,
-                               compounding: int = Compounding.PERIODIC) -> float:
+                               compounding=Compounding.PERIODIC) -> float:
         """Clean price plus accrued."""
         return self.price_from_yield(yield_, compounding) + self.accrued
 
     def risk(self, yield_: float,
-             compounding: int = Compounding.PERIODIC) -> dict:
+             compounding=Compounding.PERIODIC) -> dict:
         """Every analytic measure at one yield, as a dict.
 
         The native side computes these from a single pass over the
-        cashflows, but exposes them one at a time; this is four calls,
-        so prefer the individual methods in a tight loop.
+        cashflows but exposes them one at a time, so this is four calls.
+        Prefer the individual methods in a tight loop.
         """
         return {
             "clean_price": self.price_from_yield(yield_, compounding),
@@ -289,6 +298,10 @@ class Bond(_firisk.Bond):
         return pd.DataFrame({"time": times, "amount": amounts})
 
     def __repr__(self) -> str:
+        # Reading cashflow_count on an unbuilt instance makes nanobind
+        # warn before it raises, so gate on the flag rather than catch.
+        count = self.cashflow_count if self._built else "?"
+
         return (f"Bond(maturity={from_yyyymmdd(self._maturity_date)}, "
                 f"coupon={self._coupon_rate:.4%}, face={self._face:g}, "
-                f"cashflows={self.cashflow_count})")
+                f"cashflows={count})")
