@@ -70,16 +70,23 @@ jobs:
         if: matrix.build_type == 'release' && matrix.compiler == 'gcc'
         run: |
           lib=build/gcc-release/src/libfirisk.so
+
+          # Only real code and data matter. Type A is an absolute symbol,
+          # which is how ELF records the version node name from the
+          # version script — not something a caller can reach.
           leaked=$(nm -D --defined-only "$lib" \
-                     | awk '{print $3}' \
+                     | awk '$2 ~ /^[TDBRW]$/ {print $3}' \
                      | grep -v '^fir_' \
                      | grep -v '^_' || true)
+
           if [ -n "$leaked" ]; then
             echo "symbols leaked from the shared library:"
             echo "$leaked"
             exit 1
           fi
+
           echo "only fir_* is exported"
+          nm -D --defined-only "$lib" | awk '$2 ~ /^[TDBRW]$/ {print "  " $3}'
 
   # ------------------------------------------------------------------
   # CFFI suite against the built shared library. This is the primary
